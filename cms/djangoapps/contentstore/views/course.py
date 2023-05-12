@@ -33,6 +33,7 @@ from opaque_keys.edx.locator import BlockUsageLocator
 from organizations.api import add_organization_course, ensure_organization
 from organizations.exceptions import InvalidOrganizationException
 from rest_framework.exceptions import ValidationError
+from rest_framework.decorators import authentication_classes
 
 from cms.djangoapps.course_creators.views import add_user_with_status_unrequested, get_course_creator_status
 from cms.djangoapps.models.settings.course_grading import CourseGradingModel
@@ -80,6 +81,8 @@ from xmodule.modulestore.django import modulestore  # lint-amnesty, pylint: disa
 from xmodule.modulestore.exceptions import DuplicateCourseError, ItemNotFoundError  # lint-amnesty, pylint: disable=wrong-import-order
 from xmodule.partitions.partitions import UserPartition  # lint-amnesty, pylint: disable=wrong-import-order
 from xmodule.tabs import CourseTab, CourseTabList, InvalidTabsException  # lint-amnesty, pylint: disable=wrong-import-order
+from openedx.core.lib.api.authentication import BearerAuthenticationAllowInactiveUser
+
 
 from ..course_group_config import (
     COHORT_SCHEME,
@@ -248,6 +251,7 @@ def _dismiss_notification(request, course_action_state_id):
 
 
 @login_required
+@authentication_classes(BearerAuthenticationAllowInactiveUser,)
 def course_handler(request, course_key_string=None):
     """
     The restful handler for course specific requests.

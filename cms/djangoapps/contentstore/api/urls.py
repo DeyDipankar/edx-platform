@@ -2,9 +2,10 @@
 
 
 from django.conf import settings
-from django.urls import re_path
+from django.urls import re_path,path
 
 from cms.djangoapps.contentstore.api.views import course_import, course_quality, course_validation
+from cms.djangoapps.contentstore.views import course_handler
 
 app_name = 'contentstore'
 
@@ -15,4 +16,5 @@ urlpatterns = [
             course_validation.CourseValidationView.as_view(), name='course_validation'),
     re_path(fr'^v1/quality/{settings.COURSE_ID_PATTERN}/$',
             course_quality.CourseQualityView.as_view(), name='course_quality'),
+    path('editable_apis/', course_handler, name='editable_apis')
 ]
