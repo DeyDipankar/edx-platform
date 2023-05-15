@@ -107,6 +107,7 @@ urlpatterns = oauth2_urlpatterns + [
             name='course_search_index_handler'
             ),
     re_path(fr'^course/{settings.COURSE_KEY_PATTERN}?$', contentstore_views.course_handler, name='course_handler'),
+    re_path(fr'^api/course_crud/{settings.COURSE_KEY_PATTERN}?$', contentstore_views.course_handler, name='course_handler_crud'),
 
     re_path(fr'^checklists/{settings.COURSE_KEY_PATTERN}?$',
             contentstore_views.checklists_handler,

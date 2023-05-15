@@ -251,7 +251,7 @@ def _dismiss_notification(request, course_action_state_id):
 
 
 @login_required
-@authentication_classes(BearerAuthenticationAllowInactiveUser,)
+# @authentication_classes(BearerAuthenticationAllowInactiveUser,)
 def course_handler(request, course_key_string=None):
     """
     The restful handler for course specific requests.
@@ -1911,3 +1911,59 @@ def _get_course_creator_status(user):
         course_creator_status = 'granted'
 
     return course_creator_status
+
+@authentication_classes((BearerAuthenticationAllowInactiveUser ,))
+def course_crud_apis(request, course_key_string=None):
+    """
+    The restful handler for course specific requests.
+    It provides the course tree with the necessary information for identifying and labeling the parts. The root
+    will typically be a 'course' object but may not be especially as we support modules.
+
+    GET
+        html: return course listing page if not given a course id
+        html: return html page overview for the given course if given a course id
+        json: return json representing the course branch's index entry as well as dag w/ all of the children
+        replaced w/ json docs where each doc has {'_id': , 'display_name': , 'children': }
+    POST
+        json: create a course, return resulting json
+        descriptor (same as in GET course/...). Leaving off /branch/draft would imply create the course w/ default
+        branches. Cannot change the structure contents ('_id', 'display_name', 'children') but can change the
+        index entry.
+    PUT
+        json: update this course (index entry not xblock) such as repointing head, changing display name, org,
+        course, run. Return same json as above.
+    DELETE
+        json: delete this branch from this course (leaving off /branch/draft would imply delete the course)
+    """
+    try:
+        if course_key_string:
+            course_key = CourseKey.from_string(course_key_string)
+            if course_key.deprecated:
+                logging.error(f"User {request.user.id} tried to access Studio for Old Mongo course {course_key}.")
+                return HttpResponseNotFound()
+        response_format = request.GET.get('format') or request.POST.get('format') or 'html'
+        if response_format == 'json' or 'application/json' in request.META.get('HTTP_ACCEPT', 'application/json'):
+            if request.method == 'GET':
+                course_key = CourseKey.from_string(course_key_string)
+                with modulestore().bulk_operations(course_key):
+                    course_module = get_course_and_check_access(course_key, request.user, depth=None)
+                    return JsonResponse(_course_outline_json(request, course_module))
+            elif request.method == 'POST':  # not sure if this is only post. If one will have ids, it goes after access
+                return _create_or_rerun_course(request)
+            elif not has_studio_write_access(request.user, CourseKey.from_string(course_key_string)):
+                raise PermissionDenied()
+            elif request.method == 'PUT':
+                raise NotImplementedError()
+            elif request.method == 'DELETE':
+                raise NotImplementedError()
+            else:
+                return HttpResponseBadRequest()
+        elif request.method == 'GET':  # assume html
+            if course_key_string is None:
+                return redirect(reverse('home'))
+            else:
+                return course_index(request, CourseKey.from_string(course_key_string))
+        else:
+            return HttpResponseNotFound()
+    except InvalidKeyError:
+        raise Http404  # lint-amnesty, pylint: disable=raise-missing-from
