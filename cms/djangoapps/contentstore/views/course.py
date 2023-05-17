@@ -1938,7 +1938,7 @@ def course_crud_apis(request):
     """
     try:
         org = request.data.get('org')
-        course = request.data.get('number', request.json.get('course'))
+        course = request.data.get('number', request.data.get('course'))
         display_name = request.data.get('display_name')
         run = request.data.get('run')
         start = request.data.get('start', CourseFields.start.default)
