@@ -81,7 +81,13 @@ from xmodule.modulestore.django import modulestore  # lint-amnesty, pylint: disa
 from xmodule.modulestore.exceptions import DuplicateCourseError, ItemNotFoundError  # lint-amnesty, pylint: disable=wrong-import-order
 from xmodule.partitions.partitions import UserPartition  # lint-amnesty, pylint: disable=wrong-import-order
 from xmodule.tabs import CourseTab, CourseTabList, InvalidTabsException  # lint-amnesty, pylint: disable=wrong-import-order
-from openedx.core.lib.api.authentication import BearerAuthenticationAllowInactiveUser
+from openedx.core.lib.api.authentication import BearerAuthenticationAllowInactiveUser,BearerAuthentication
+from rest_framework.authentication import SessionAuthentication
+from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
+from edx_rest_framework_extensions.auth.session.authentication import SessionAuthenticationAllowInactiveUser
+from rest_framework.decorators import api_view
+from rest_framework import status
+from rest_framework.response import Response
 
 
 from ..course_group_config import (
@@ -1913,58 +1919,72 @@ def _get_course_creator_status(user):
 
     return course_creator_status
 
-@authentication_classes((BearerAuthenticationAllowInactiveUser ,))
-def course_crud_apis(request, course_key_string=None):
+@api_view(['POST'])
+@authentication_classes((BearerAuthenticationAllowInactiveUser ,
+                         #BearerAuthentication,
+                         #SessionAuthentication,
+                         JwtAuthentication,
+                         SessionAuthenticationAllowInactiveUser
+                         ))
+def course_crud_apis(request):
     """
-    The restful handler for course specific requests.
-    It provides the course tree with the necessary information for identifying and labeling the parts. The root
-    will typically be a 'course' object but may not be especially as we support modules.
-
-    GET
-        html: return course listing page if not given a course id
-        html: return html page overview for the given course if given a course id
-        json: return json representing the course branch's index entry as well as dag w/ all of the children
-        replaced w/ json docs where each doc has {'_id': , 'display_name': , 'children': }
-    POST
-        json: create a course, return resulting json
-        descriptor (same as in GET course/...). Leaving off /branch/draft would imply create the course w/ default
-        branches. Cannot change the structure contents ('_id', 'display_name', 'children') but can change the
-        index entry.
-    PUT
-        json: update this course (index entry not xblock) such as repointing head, changing display name, org,
-        course, run. Return same json as above.
-    DELETE
-        json: delete this branch from this course (leaving off /branch/draft would imply delete the course)
+        Method 'POST' (Create a new course API): 
+            Payload Example : {
+                        "org": "LM",
+                        "number": "CS150",
+                        "display_name": "APITest1",
+                        "run": "2023_V1"
+                    }
     """
     try:
-        if course_key_string:
-            course_key = CourseKey.from_string(course_key_string)
-            if course_key.deprecated:
-                logging.error(f"User {request.user.id} tried to access Studio for Old Mongo course {course_key}.")
-                return HttpResponseNotFound()
-        response_format = request.GET.get('format') or request.POST.get('format') or 'html'
-        if response_format == 'json' or 'application/json' in request.META.get('HTTP_ACCEPT', 'application/json'):
-            if request.method == 'GET':
-                course_key = CourseKey.from_string(course_key_string)
-                with modulestore().bulk_operations(course_key):
-                    course_module = get_course_and_check_access(course_key, request.user, depth=None)
-                    return JsonResponse(_course_outline_json(request, course_module))
-            elif request.method == 'POST':  # not sure if this is only post. If one will have ids, it goes after access
-                return _create_or_rerun_course(request)
-            elif not has_studio_write_access(request.user, CourseKey.from_string(course_key_string)):
-                raise PermissionDenied()
-            elif request.method == 'PUT':
-                raise NotImplementedError()
-            elif request.method == 'DELETE':
-                raise NotImplementedError()
-            else:
-                return HttpResponseBadRequest()
-        elif request.method == 'GET':  # assume html
-            if course_key_string is None:
-                return redirect(reverse('home'))
-            else:
-                return course_index(request, CourseKey.from_string(course_key_string))
-        else:
-            return HttpResponseNotFound()
-    except InvalidKeyError:
-        raise Http404  # lint-amnesty, pylint: disable=raise-missing-from
+        org = request.data.get('org')
+        course = request.data.get('number', request.json.get('course'))
+        display_name = request.data.get('display_name')
+        run = request.data.get('run')
+        start = request.data.get('start', CourseFields.start.default)
+        
+        fields = {'start': start}
+        if display_name is not None:
+            fields['display_name'] = display_name
+        wiki_slug = f"{org}.{course}.{run}"
+        definition_data = {'wiki_slug': wiki_slug}
+        fields.update(definition_data)
+
+        #Validation for user role
+        has_course_creator_role = is_content_creator(request.user, org)
+        if not has_course_creator_role:
+            return Response(
+                {'error': 'User doesn\'t have course create permission'},
+                status=status.HTTP_409_CONFLICT
+            )
+        #Validation for payload
+        if not settings.FEATURES.get('ALLOW_UNICODE_COURSE_ID'):
+            if _has_non_ascii_characters(org) or _has_non_ascii_characters(course) or _has_non_ascii_characters(run):
+                return Response(
+                    {'error': 'Special characters not allowed in organization, course number, and course run.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        new_course = create_new_course(request.user, org, course, run, fields)
+        return Response({
+            'url': reverse_course_url('course_handler', new_course.id),
+            'course_key': str(new_course.id),
+        }, status=status.HTTP_201_CREATED)
+    except DuplicateCourseError:
+        return Response({
+            'ErrMsg': _(
+                'There is already a course defined with the same '
+                'organization and course number. Please '
+                'change either organization or course number to be unique.'
+            ),
+            'OrgErrMsg': _(
+                'Please change either the organization or '
+                'course number so that it is unique.'),
+            'CourseErrMsg': _(
+                'Please change either the organization or '
+                'course number so that it is unique.'),
+        }, status=status.status.HTTP_409_CONFLICT)
+    except Exception as e:
+        return Response(
+                    {'error': f'{str(e)}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
