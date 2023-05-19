@@ -1982,7 +1982,7 @@ def course_crud_apis(request):
             'CourseErrMsg': _(
                 'Please change either the organization or '
                 'course number so that it is unique.'),
-        }, status=status.status.HTTP_409_CONFLICT)
+        }, status=status.HTTP_409_CONFLICT)
     except Exception as e:
         return Response(
                     {'error': f'{str(e)}'},
